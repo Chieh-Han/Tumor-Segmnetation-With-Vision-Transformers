@@ -11,10 +11,10 @@ print(img.header.get_zooms())  # voxel size in mm, e.g. (1.0, 1.0, 1.0, 1.0)
 data = img.get_fdata()
 modalities = ["FLAIR", "T1", "T1gd", "T2"]
 
-flair = data[..., 0]    # FLAIR (Fluid Attenuated Inversion Recovery)
-t1    = data[..., 1]    # T1 
-t1gd  = data[..., 2]    # T1 with gadolinium contrast — shows enhancing tumor
-t2    = data[..., 3]    # T2
+flair = data[..., 0]    # T2 but with CSF suppressed, so periventricular lesions aren't washed out by fluid signal.
+t1    = data[..., 1]    # Anatomy scan. Fat/white matter bright, water dark. Think "T1 = Tissue structure."
+t1gd  = data[..., 2]    # T1 after gadolinium contrast. Bright spots = blood-brain barrier breakdown (tumors, active inflammation).
+t2    = data[..., 3]    # Pathology detector. Water/CSF bright. Edema and lesions show up well.
 
 # Start in the middle slice
 slice_idx = data.shape[2] // 2

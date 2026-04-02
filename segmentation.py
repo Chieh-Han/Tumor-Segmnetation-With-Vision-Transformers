@@ -1,6 +1,7 @@
 import torch
 import monai
 from monai.networks.nets import SwinUNETR
+import nibabel as nib
 
 # 1. Check Versions
 print(f"MONAI version: {monai.__version__}")
@@ -17,13 +18,4 @@ else:
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-# Initialize for 1.5.2 (img_size is no longer a keyword)
-model = SwinUNETR(
-    spatial_dims=3,     # 3 for 3D volumes (MRI/CT)
-    in_channels=4,      # e.g., 4 modalities for BraTS (T1, T1c, T2, FLAIR)
-    out_channels=3,     # tumor regions (WT, TC, ET)
-    feature_size=48,    # Standard for the high-performance Swin variant
-    use_checkpoint=True # CRITICAL for your 16GB VRAM to avoid OOM
-).to(device)
-
-print("SwinUNETR 1.5.2 initialized successfully!")
+img = nib.load("Task01_BrainTumour/imagesTr/BRATS_001.nii.gz")

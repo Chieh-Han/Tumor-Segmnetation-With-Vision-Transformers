@@ -27,12 +27,6 @@ ncr   = vedo.Volume((labels == 1).astype(np.float32)).isosurface(0.5) # Non-Cont
 edema = vedo.Volume((labels == 2).astype(np.float32)).isosurface(0.5) # Surrounding Swelling : not tumor itself, but reacts to it
 et    = vedo.Volume((labels == 3).astype(np.float32)).isosurface(0.5) # Enhancing Tumor : active, aggressive tumor core
 
-'''
-Bright in T1gd → likely enhancing tumor
-Bright in FLAIR/T2 → edema
-Mixed/dark core → necrosis/NCR
-'''
-
 ncr.color('brown').alpha(0.8)
 edema.color('blue').alpha(0.6)
 et.color('red').alpha(0.9)

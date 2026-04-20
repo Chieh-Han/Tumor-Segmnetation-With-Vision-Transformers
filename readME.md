@@ -3,19 +3,10 @@
   <br>
 </h1>
 
-<div align="center" style="display: flex; justify-content: center; gap: 20px;">
-  <div>
-    <img src="img/3D_Sample_Brain_01.png" style="width:300px; height:300px; object-fit:cover;" />
-    <br>
-    3D Sample View 1
-  </div>
-
-  <div>
-    <img src="img/3D_Sample_Brain_02.png" style="width:300px; height:300px; object-fit:cover;" />
-    <br>
-    3D Sample View 2
-  </div>
-</div>
+<p align="center">
+  <img src="img/3D_Sample_Brain_01.png" width="300" height="300" style="object-fit:cover;" />
+  <img src="img/3D_Sample_Brain_02.png" width="300" height="300" style="object-fit:cover;" />
+</p>
 
 ## Training Image: 4 modalities
 

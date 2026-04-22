@@ -46,8 +46,8 @@ train_transforms = Compose([
     ConvertToMultiChannelBasedOnBratsClassesd(keys="label"),
     # Brats use 1,2,3 to label different part of the tumor 
     # whole_tumor = (label == 1) | (label == 2) | (label == 3)  # all three
-    # tumor_core  = (label == 1) | (label == 3)                  # skip edema
-    # enhancing   = (label == 3)                                  # just ET
+    # tumor_core  = (label == 1) | (label == 3)                 # skip edema
+    # enhancing   = (label == 3)                                # just ET
     
     
     # z-score normalize each modality over nonzero voxels

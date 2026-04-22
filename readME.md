@@ -8,6 +8,10 @@
   <img src="img/3D_Sample_Brain_02.png" width="300" height="300" style="object-fit:cover;" />
 </p>
 
+## Core Idea
+
+Using 4 modalities of Brain MRI scans to segment into 3 tumor regions.
+
 ## Training Image: 4 modalities
 
 shape: (240, 240, 155, 4)
@@ -34,14 +38,19 @@ shape: (240, 240, 155)
 
 with `ConvertToMultiChannelBasedOnBratsClassesd` we have:  
 
-Takes raw integer values and classifz them into 3 seperate classes, replacing raw integer with binary   
+## Channelized
+
 shape: (3, 240, 240, 155)
 
-channel 0 — Tumor Core  (TC)  =  label 1 + label 3  
-channel 1 — Whole Tumor (WT)  =  label 1 + label 2 + label 3  
-channel 2 — Enhancing Tumor  (ET)  =  label 3 only  
+Takes raw integer values and classifz them into 3 seperate classes, replacing raw integer with binary   
 
-## In Plain English
+| Channel     | Region                  |
+|-------------|-------------------------|
+| channel 0   | Tumor Core  (TC)        |
+| channel 1   | Whole Tumor (WT)        |
+| channel 2   | Enhancing Tumor  (ET)   |  
+
+**In Plain English:**  
 
 TC — what needs to be surgically removed?  
 WT — how much brain is affected overall?  
@@ -49,17 +58,17 @@ ET — where is active tumor **growth** happening?
 
 ## What each modality tell us
 
-### FLAIR → best for Whole Tumor / Edema (ED)  
-
-**FLAIR** suppresses normal fluid so the edema ring around the tumor appears bright white. It shows the full extent of tumor involvement better than any other sequence. If you only had one modality to delineate the whole tumor boundary, you'd pick FLAIR.
-
-### T1gd → best for Enhancing Tumor (ET)
-
-**T1gd** is the reason ET can be identified at all. ET lights up bright on **T1gd** and is nearly invisible on every other modality. The gadolinium contrast agent physically accumulates where the blood-brain barrier has broken down, which is exactly where active tumor growth is happening.  
-
 ### T1 + T1gd together → best for Tumor Core (NCR)
 
 Necrotic tissue appears dark on **T1** but the contrast between necrosis and the enhancing rim around it is most visible when you compare **T1** and **T1gd** side by side. On **T1gd** the enhancing rim is bright, the necrotic center is dark. This that contrast reveals the core boundary.
+
+### T1gd → best for Enhancing Tumor (ET)
+
+**T1gd** is the reason ET can be identified at all. ET lights up bright on **T1gd** and is nearly invisible on every other modality. The *gadolinium* contrast agent physically accumulates where the blood-brain barrier has broken down, which is exactly where active tumor growth is happening.  
+
+### FLAIR → best for Whole Tumor / Edema (ED)  
+
+**FLAIR** suppresses normal fluid so the edema ring around the tumor appears bright white. It shows the full extent of tumor involvement better than any other sequence. If you only had one modality to delineate the whole tumor boundary, you'd pick FLAIR.
 
 ### T2 → complements FLAIR for edema
 

@@ -1,7 +1,7 @@
 import json
-import os
-import torch
 from pathlib import Path
+import matplotlib.pyplot as plt
+import monai
 from monai.transforms import (
     Compose,
     LoadImaged,
@@ -16,8 +16,8 @@ from monai.transforms import (
 from monai.data import Dataset, DataLoader
 
 # Fix ROCm bug with cuda
-torch.backends.cudnn.benchmark = False
-torch.backends.cudnn.enabled = False
+monai.torch.backends.cudnn.benchmark = False
+monai.torch.backends.cudnn.enabled = False
 
 # Load Data 
 data_root = Path("Task01_BrainTumour")
@@ -39,10 +39,6 @@ split      = int(len(all_cases) * 0.8)
 train_list = all_cases[:split]
 val_list   = all_cases[split:]
 
-print(f"Total cases:      {len(all_cases)}")
-print(f"Training cases:   {len(train_list)}")
-print(f"Validation cases: {len(val_list)}")
-
 # Pre-Process Transforms for Training Data
 
 train_transforms = Compose([ # allows chainning varias pre-processes
@@ -57,13 +53,12 @@ train_transforms = Compose([ # allows chainning varias pre-processes
     # tumor_core  = (label == 1) | (label == 3)                 # skip edema
     # enhancing   = (label == 3)                                # just ET
     
-    
     # z-score normalize each modality over nonzero voxels
     NormalizeIntensityd(
         keys="image",
         nonzero=True,
         channel_wise=True
-    ),
+    ), 
 
     # random 128³ crop — every iteration sees different cube but eventually sees the whole brain
     RandSpatialCropd(
@@ -113,3 +108,40 @@ val_loader = DataLoader(
     shuffle=False,      # always same order for validation
     num_workers=4,
 )
+
+# Dataloader sanity check
+if __name__ == "__main__": # wrapper from guarding multiple worker from starting a fresh process
+    print(f"Total cases:      {len(all_cases)}")
+    print(f"Training cases:   {len(train_list)}")
+    print(f"Validation cases: {len(val_list)}")
+
+    batch = next(iter(train_loader)) # load the first sample in train_loader
+    
+    print(batch["image"].shape) # expect (1, 4, 128, 128, 128) (batch, channel, b, w, h)
+    print(batch["label"].shape) # expect (1, 3, 128, 128, 128)
+    print(batch["image"].dtype) # expect float32
+    print(batch["label"].dtype) # expect bool since we switch it to 3 binary channels
+    
+    for i, batch in enumerate(train_loader):
+        pass
+    print(f"number of training samples: {i}")
+    
+    # Quick look for the 1 sample
+    img = batch["image"][0]  # (4, 128, 128, 128)
+    lbl = batch["label"][0]  # (3, 128, 128, 128)
+    s = 64  # middle slice
+
+    fig, axes = plt.subplots(2, 4, figsize=(14, 7))
+    modalities = ["FLAIR", "T1", "T1gd", "T2"]
+    for i in range(4):
+        axes[0, i].imshow(img[i, :, :, s], cmap="gray")
+        axes[0, i].set_title(modalities[i])
+
+    labels = ["Whole Tumor", "Tumor Core", "Enhancing"]
+    for i in range(3):
+        axes[1, i].imshow(lbl[i, :, :, s], cmap="hot")
+        axes[1, i].set_title(labels[i])
+
+    axes[1, 3].axis("off")
+    plt.tight_layout()
+    plt.show()

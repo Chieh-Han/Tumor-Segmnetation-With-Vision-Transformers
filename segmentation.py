@@ -1,6 +1,7 @@
 import json
 from pathlib import Path
 import matplotlib.pyplot as plt
+import torch
 import monai
 from monai.transforms import (
     Compose,
@@ -14,10 +15,12 @@ from monai.transforms import (
     ToTensord,
 )
 from monai.data import Dataset, DataLoader
+from monai.networks.nets import SwinUNETR
+import urllib.request
 
 # Fix ROCm bug with cuda
-monai.torch.backends.cudnn.benchmark = False
-monai.torch.backends.cudnn.enabled = False
+torch.backends.cudnn.benchmark = False
+torch.backends.cudnn.enabled = False
 
 # Load Data 
 data_root = Path("Task01_BrainTumour")
@@ -87,12 +90,13 @@ val_transforms = Compose([
     # no crop for validation — sliding window handles the full volume
 ])
 
-# Build Dataset (Connection of training list w/ tranform, not actually linked till called upon)
+# Dataset: What to load (Connection of training list w/ tranform, not actually linked till called upon)
 
 train_ds = Dataset(data=train_list, transform=train_transforms)
 val_ds   = Dataset(data=val_list,   transform=val_transforms)
 
-# DataLoader (Calls dataset during training to link training data w/ transforms)
+# DataLoader: How to load it (Calls dataset during training to link training data w/ transforms)
+# Acutally data is only loaded onto ram when calling in next(iter()) or for loop
 
 train_loader = DataLoader(
     train_ds,
@@ -121,11 +125,13 @@ if __name__ == "__main__": # wrapper from guarding multiple worker from starting
     print(batch["label"].shape) # expect (1, 3, 128, 128, 128)
     print(batch["image"].dtype) # expect float32
     print(batch["label"].dtype) # expect bool since we switch it to 3 binary channels
-    
+
+    '''
+    # Check how many samples
     for i, batch in enumerate(train_loader):
         pass
     print(f"number of training samples: {i}")
-    
+
     # Quick look for the 1 sample
     img = batch["image"][0]  # (4, 128, 128, 128)
     lbl = batch["label"][0]  # (3, 128, 128, 128)
@@ -145,3 +151,17 @@ if __name__ == "__main__": # wrapper from guarding multiple worker from starting
     axes[1, 3].axis("off")
     plt.tight_layout()
     plt.show()
+    '''
+    # Check Hardware Compatibility
+    print(f"MONAI version: {monai.__version__}")
+    print(f"PyTorch version: {torch.__version__}")
+
+    gpu_available = torch.cuda.is_available()
+    print(f"GPU Available: {gpu_available}")
+
+    if gpu_available:
+        print(f"Using Device: {torch.cuda.get_device_name(0)}")
+    else:
+        print("Warning: GPU not detected. MONAI will run on CPU (very slow).")
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")

@@ -144,12 +144,12 @@ def train_one_epoch(model, loader, optimizer, loss_fn):
     model.train()
     total_loss = 0
 
-    for batch in tqdm(loader, desc="Training"):
+    for batch in tqdm(loader, desc="Training", ncols=80):
         image = batch["image"].to(device)
         label = batch["label"].to(device)
 
         optimizer.zero_grad()
-        with torch.amp.autocast():
+        with torch.amp.autocast("cuda"): # autocase casts forward pass into float16 calculation to save time
             output = model(image)
             loss   = loss_fn(output, label)
         
@@ -183,4 +183,9 @@ if __name__ == "__main__":
 
     loss_fn = DiceCELoss(to_onehot_y=False, sigmoid=True)
     optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4, weight_decay=1e-5)
-    train_one_epoch(model, train_loader, optimizer, loss_fn)
+
+    num_epoch = 3
+    
+    for epoch in range(num_epoch):
+        loss = train_one_epoch(model, train_loader, optimizer, loss_fn)
+        print(f"Epoch {epoch+1}/{num_epoch} | Loss: {loss:.4f}")

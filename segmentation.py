@@ -1,8 +1,13 @@
 import json
+import sys
+import urllib.request
 from pathlib import Path
-import matplotlib.pyplot as plt
-import torch
+from tqdm import tqdm
+
 import monai
+import torch
+from monai.data import Dataset, DataLoader
+from monai.networks.nets import SwinUNETR
 from monai.transforms import (
     Compose,
     LoadImaged,
@@ -14,154 +19,168 @@ from monai.transforms import (
     ConvertToMultiChannelBasedOnBratsClassesd,
     ToTensord,
 )
-from monai.data import Dataset, DataLoader
-from monai.networks.nets import SwinUNETR
-import urllib.request
+from monai.losses import DiceCELoss
 
-# Fix ROCm bug with cuda
-torch.backends.cudnn.benchmark = False
-torch.backends.cudnn.enabled = False
+# Constants
 
-# Load Data 
-data_root = Path("Task01_BrainTumour")
+DATA_ROOT    = Path("Task01_BrainTumour")
+WEIGHTS_URL  = "https://github.com/Project-MONAI/MONAI-extra-test-data/releases/download/0.8.1/model_swinvit.pt"
+WEIGHTS_PATH = Path("model_swinvit.pt")
+CROP_SIZE    = (96, 96, 96)
 
-with open(data_root / "dataset.json") as f:
-    meta = json.load(f)
+#monai.torch.backends.cudnn.benchmark = False
+#monai.torch.backends.cudnn.enabled   = False
 
-# build list of dicts with absolute paths
-all_cases = [
-    {
-        "image": str(data_root / entry["image"].lstrip("./")),
-        "label": str(data_root / entry["label"].lstrip("./")),
-    }
-    for entry in meta["training"]
-]
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+scaler = torch.amp.GradScaler("cuda")
+# Data
 
-# split 80/20 train/val
-split      = int(len(all_cases) * 0.8)
-train_list = all_cases[:split]
-val_list   = all_cases[split:]
+def load_data():
+    with open(DATA_ROOT / "dataset.json") as f:
+        meta = json.load(f)
 
-# Pre-Process Transforms for Training Data
+    all_cases = [
+        {
+            "image": str(DATA_ROOT / entry["image"].lstrip("./")),
+            "label": str(DATA_ROOT / entry["label"].lstrip("./")),
+        }
+        for entry in meta["training"]
+    ]
 
-train_transforms = Compose([ # allows chainning varias pre-processes
-    LoadImaged(keys=["image", "label"]), # loads data into numpy arrays from dictionary of file path
-    EnsureChannelFirstd(keys=["image", "label"]), # NIfTI store the channel dimension last, PyTorch expects first, switch to pytorch format
+    split      = int(len(all_cases) * 0.8)
+    train_list = all_cases[:split]
+    val_list   = all_cases[split:]
 
-    # convert integer labels 0,1,2,3 to 3 binary channels
-    ConvertToMultiChannelBasedOnBratsClassesd(keys="label"),    # shape: (3, 240, 240, 155)
-    
-    # Brats use 1,2,3 to label different part of the tumor 
-    # whole_tumor = (label == 1) | (label == 2) | (label == 3)  # all three
-    # tumor_core  = (label == 1) | (label == 3)                 # skip edema
-    # enhancing   = (label == 3)                                # just ET
-    
-    # z-score normalize each modality over nonzero voxels
-    NormalizeIntensityd(
-        keys="image",
-        nonzero=True,
-        channel_wise=True
-    ), 
+    return train_list, val_list
 
-    # random 128³ crop — every iteration sees different cube but eventually sees the whole brain
-    RandSpatialCropd(
-        keys=["image", "label"], # need to crop both image and label
-        roi_size=(128, 128, 128),
-        random_size=False,
-    ),
 
-    # augmentation
-    RandFlipd(keys=["image", "label"], prob=0.5, spatial_axis=0),
-    RandFlipd(keys=["image", "label"], prob=0.5, spatial_axis=1),
-    RandFlipd(keys=["image", "label"], prob=0.5, spatial_axis=2),
-    RandRotate90d(keys=["image", "label"], prob=0.5, max_k=3),
+def build_transforms():
+    train_transforms = Compose([
+        LoadImaged(keys=["image", "label"]),
+        EnsureChannelFirstd(keys=["image", "label"]),
+        ConvertToMultiChannelBasedOnBratsClassesd(keys="label"),
+        NormalizeIntensityd(keys="image", nonzero=True, channel_wise=True),
+        RandSpatialCropd(keys=["image", "label"], roi_size=CROP_SIZE, random_size=False),
+        RandFlipd(keys=["image", "label"], prob=0.5, spatial_axis=0),
+        RandFlipd(keys=["image", "label"], prob=0.5, spatial_axis=1),
+        RandFlipd(keys=["image", "label"], prob=0.5, spatial_axis=2),
+        RandRotate90d(keys=["image", "label"], prob=0.5, max_k=3),
+        ToTensord(keys=["image", "label"]),
+    ])
 
-    ToTensord(keys=["image", "label"]),
-])
+    val_transforms = Compose([
+        LoadImaged(keys=["image", "label"]),
+        EnsureChannelFirstd(keys=["image", "label"]),
+        ConvertToMultiChannelBasedOnBratsClassesd(keys="label"),
+        NormalizeIntensityd(keys="image", nonzero=True, channel_wise=True),
+        ToTensord(keys=["image", "label"]),
+    ])
 
-# Pre-Process Transforms for Validation Data
+    return train_transforms, val_transforms
 
-val_transforms = Compose([
-    LoadImaged(keys=["image", "label"]),
-    EnsureChannelFirstd(keys=["image", "label"]),
-    ConvertToMultiChannelBasedOnBratsClassesd(keys="label"),
-    NormalizeIntensityd(keys="image", nonzero=True, channel_wise=True),
-    ToTensord(keys=["image", "label"]),
-    # no crop for validation — sliding window handles the full volume
-])
 
-# Dataset: What to load (Connection of training list w/ tranform, not actually linked till called upon)
+def build_loaders(train_list, val_list, train_transforms, val_transforms):
+    train_ds = Dataset(data=train_list, transform=train_transforms)
+    val_ds   = Dataset(data=val_list,   transform=val_transforms)
 
-train_ds = Dataset(data=train_list, transform=train_transforms)
-val_ds   = Dataset(data=val_list,   transform=val_transforms)
+    train_loader = DataLoader(train_ds, batch_size=1, shuffle=True,  num_workers=4, pin_memory=True)
+    val_loader   = DataLoader(val_ds,   batch_size=1, shuffle=False, num_workers=4)
 
-# DataLoader: How to load it (Calls dataset during training to link training data w/ transforms)
-# Acutally data is only loaded onto ram when calling in next(iter()) or for loop
+    return train_loader, val_loader
 
-train_loader = DataLoader(
-    train_ds,
-    batch_size=1,       # one volume per step, common for 3D medical imaging due to large data dim
-    shuffle=True,       # randomize order each epoch
-    num_workers=4,      # parallel data loading
-    pin_memory=True,    # faster CPU→GPU transfer
-)
+# Model
 
-val_loader = DataLoader(
-    val_ds,
-    batch_size=1,
-    shuffle=False,      # always same order for validation
-    num_workers=4,
-)
+def build_model():
+    model = SwinUNETR(
+        in_channels=4,
+        out_channels=3,
+        feature_size=48,
+        use_checkpoint=True,
+    ).to(device)
 
-# Dataloader sanity check
-if __name__ == "__main__": # wrapper from guarding multiple worker from starting a fresh process
-    print(f"Total cases:      {len(all_cases)}")
-    print(f"Training cases:   {len(train_list)}")
-    print(f"Validation cases: {len(val_list)}")
+    if not WEIGHTS_PATH.exists():
+        print("Downloading pretrained weights...")
+        urllib.request.urlretrieve(WEIGHTS_URL, WEIGHTS_PATH)
 
-    batch = next(iter(train_loader)) # load the first sample in train_loader
-    
-    print(batch["image"].shape) # expect (1, 4, 128, 128, 128) (batch, channel, b, w, h)
-    print(batch["label"].shape) # expect (1, 3, 128, 128, 128)
-    print(batch["image"].dtype) # expect float32
-    print(batch["label"].dtype) # expect bool since we switch it to 3 binary channels
+    weight = torch.load(WEIGHTS_PATH)
+    model.load_state_dict(weight["state_dict"], strict=False)
+    print("Encoder weights loaded.")
 
-    '''
-    # Check how many samples
-    for i, batch in enumerate(train_loader):
-        pass
-    print(f"number of training samples: {i}")
+    return model
 
-    # Quick look for the 1 sample
-    img = batch["image"][0]  # (4, 128, 128, 128)
-    lbl = batch["label"][0]  # (3, 128, 128, 128)
-    s = 64  # middle slice
+# Sanity Checks
 
-    fig, axes = plt.subplots(2, 4, figsize=(14, 7))
-    modalities = ["FLAIR", "T1", "T1gd", "T2"]
-    for i in range(4):
-        axes[0, i].imshow(img[i, :, :, s], cmap="gray")
-        axes[0, i].set_title(modalities[i])
-
-    labels = ["Whole Tumor", "Tumor Core", "Enhancing"]
-    for i in range(3):
-        axes[1, i].imshow(lbl[i, :, :, s], cmap="hot")
-        axes[1, i].set_title(labels[i])
-
-    axes[1, 3].axis("off")
-    plt.tight_layout()
-    plt.show()
-    '''
-    # Check Hardware Compatibility
-    print(f"MONAI version: {monai.__version__}")
+def check_system():
+    print(f"MONAI version:  {monai.__version__}")
     print(f"PyTorch version: {torch.__version__}")
-
-    gpu_available = torch.cuda.is_available()
-    print(f"GPU Available: {gpu_available}")
-
-    if gpu_available:
-        print(f"Using Device: {torch.cuda.get_device_name(0)}")
+    if torch.cuda.is_available():
+        print(f"GPU: {torch.cuda.get_device_name(0)}")
     else:
-        print("Warning: GPU not detected. MONAI will run on CPU (very slow).")
+        print("Warning: no GPU detected, will be very slow.")
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+def check_dataloader(train_loader):
+    batch = next(iter(train_loader))
+    print(f"Image shape: {batch['image'].shape}")  # (1, 4, 96, 96, 96)
+    print(f"Label shape: {batch['label'].shape}")  # (1, 3, 96, 96, 96)
+    print(f"Image dtype: {batch['image'].dtype}")
+    print(f"Label dtype: {batch['label'].dtype}")
+
+
+def check_model(model):
+    with torch.no_grad():
+        dummy = torch.randn(1, 4, 96, 96, 96).to(device)
+        out   = model(dummy)
+        print(f"Model output shape: {out.shape}")  # (1, 3, 96, 96, 96)
+
+    print(f"VRAM allocated: {torch.cuda.memory_allocated()/1e9:.2f} GB")
+    print(f"VRAM reserved:  {torch.cuda.memory_reserved()/1e9:.2f} GB")
+    torch.cuda.empty_cache()
+    
+    
+# Train    
+
+def train_one_epoch(model, loader, optimizer, loss_fn):
+    model.train()
+    total_loss = 0
+
+    for batch in tqdm(loader, desc="Training"):
+        image = batch["image"].to(device)
+        label = batch["label"].to(device)
+
+        optimizer.zero_grad()
+        with torch.amp.autocast():
+            output = model(image)
+            loss   = loss_fn(output, label)
+        
+        scaler.scale(loss).backward()
+        scaler.step(optimizer)
+        scaler.update()
+
+
+        total_loss += loss.item()
+    return total_loss / len(loader)
+
+
+# Main
+
+if __name__ == "__main__":
+    check_system()
+
+    train_list, val_list             = load_data()
+    train_transforms, val_transforms = build_transforms()
+    train_loader, val_loader         = build_loaders(train_list, val_list, train_transforms, val_transforms)
+
+    print(f"Train: {len(train_list)} | Val: {len(val_list)}")
+
+    # check_dataloader(train_loader)
+
+    model = build_model()
+    
+    # check_model(model)
+
+    # print("All checks passed. Ready to train.")
+
+    loss_fn = DiceCELoss(to_onehot_y=False, sigmoid=True)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4, weight_decay=1e-5)
+    train_one_epoch(model, train_loader, optimizer, loss_fn)

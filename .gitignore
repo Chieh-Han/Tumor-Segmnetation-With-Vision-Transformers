@@ -1,3 +1,4 @@
 Task01_BrainTumour/
 *.pt
 *.pth
+checkpoint_*.pt

@@ -185,9 +185,11 @@ if __name__ == "__main__":
     optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4, weight_decay=1e-5)
 
     num_epoch = 3
-    best_loss = float("inf")
     start_epoch = 0
-
+    
+    best_loss = float("inf")
+    train_losses = []
+    
     if Path("checkpoint_latest.pt").exists():
         checkpoint = torch.load("checkpoint_latest.pt")
         model.load_state_dict(checkpoint["model_state_dict"])
@@ -200,6 +202,7 @@ if __name__ == "__main__":
 
     for epoch in range(start_epoch, num_epoch):
         loss = train_one_epoch(model, train_loader, optimizer, loss_fn)
+        train_losses.append(loss) # records losses
         print(f"Epoch {epoch+1}/{num_epoch} | Loss: {loss:.4f}")
 
         # always save latest for resuming
@@ -208,6 +211,7 @@ if __name__ == "__main__":
             "model_state_dict": model.state_dict(),
             "optimizer_state_dict": optimizer.state_dict(),
             "loss": loss,
+            "train_losses": train_losses,
             "best_loss": best_loss,
         }, "checkpoint_latest.pt")
 
@@ -220,4 +224,4 @@ if __name__ == "__main__":
                 "optimizer_state_dict": optimizer.state_dict(),
                 "loss": loss,
             }, "checkpoint_best.pt")
-            print(f"  → New best saved: {best_loss:.4f}")
+            print(f"New best saved: {best_loss:.4f}")

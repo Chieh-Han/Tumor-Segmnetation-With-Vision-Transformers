@@ -20,6 +20,10 @@ from monai.transforms import (
     ToTensord,
 )
 from monai.losses import DiceCELoss
+from monai.inferers import sliding_window_inference
+from monai.metrics import DiceMetric
+from monai.transforms import Activations, AsDiscrete
+from monai.utils import MetricReduction
 
 # Constants
 
@@ -28,11 +32,16 @@ WEIGHTS_URL  = "https://github.com/Project-MONAI/MONAI-extra-test-data/releases/
 WEIGHTS_PATH = Path("model_swinvit.pt")
 CROP_SIZE    = (96, 96, 96)
 
-#monai.torch.backends.cudnn.benchmark = False
-#monai.torch.backends.cudnn.enabled   = False
+#torch.backends.cudnn.benchmark = False
+#torch.backends.cudnn.enabled   = False
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 scaler = torch.amp.GradScaler("cuda")
+
+dice_metric = DiceMetric(include_background=False, reduction="mean_batch")
+post_sigmoid = Activations(sigmoid=True)
+post_pred    = AsDiscrete(threshold=0.5)
+
 # Data
 
 def load_data():
@@ -138,7 +147,7 @@ def check_model(model):
     torch.cuda.empty_cache()
     
     
-# Train    
+# Training
 
 def train_one_epoch(model, loader, optimizer, loss_fn):
     model.train()
@@ -161,7 +170,55 @@ def train_one_epoch(model, loader, optimizer, loss_fn):
         total_loss += loss.item()
     return total_loss / len(loader)
 
+# Validation 
 
+def validate(model, loader, loss_fn):
+    model.eval()
+    total_loss = 0
+    dice_metric.reset()
+    
+    with torch.no_grad():
+        for batch in tqdm(loader, desc="Validation"):
+            image = batch["image"].to(device)
+            label = batch["label"].to(device)
+
+            # sliding window instead of single forward pass
+            output = sliding_window_inference(
+                image,
+                roi_size=(96, 96, 96),
+                sw_batch_size=1,
+                predictor=model,
+            )
+
+            loss = loss_fn(output, label)
+            total_loss += loss.item()
+            
+            # convert logits to binary predictions
+            # sigmoid onverts raw logits to between [0,1], 
+            # pred (binary mask) force it to hard binary, since DICE score is calculating the overlap of pred and ground truth
+            pred = post_pred(post_sigmoid(output)) 
+            dice_metric(y_pred=pred, y=label)
+        
+        
+        mean_loss = total_loss / len(loader)
+        dice_scores = dice_metric.aggregate()  # shape: (3,) one per channel
+        dice_metric.reset()
+    
+    return mean_loss, dice_scores
+
+# Checkpoint
+
+def save_checkpoint(path, epoch, model, optimizer, train_losses, val_losses, dice_scores_history, best_loss):
+    torch.save({
+        "epoch": epoch,
+        "model_state_dict": model.state_dict(),
+        "optimizer_state_dict": optimizer.state_dict(),
+        "train_losses": train_losses,
+        "val_losses": val_losses,
+        "dice_scores_history": dice_scores_history,
+        "best_loss": best_loss,
+    }, path)
+    
 # Main
 
 if __name__ == "__main__":
@@ -184,12 +241,15 @@ if __name__ == "__main__":
     loss_fn = DiceCELoss(to_onehot_y=False, sigmoid=True)
     optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4, weight_decay=1e-5)
 
-    num_epoch = 3
+    num_epoch = 10
     start_epoch = 0
     
     best_loss = float("inf")
-    train_losses = []
     
+    train_losses = []
+    val_losses = []
+    dice_scores_history = []
+
     if Path("checkpoint_latest.pt").exists():
         checkpoint = torch.load("checkpoint_latest.pt")
         model.load_state_dict(checkpoint["model_state_dict"])
@@ -201,27 +261,24 @@ if __name__ == "__main__":
         print("Starting from scratch.")
 
     for epoch in range(start_epoch, num_epoch):
-        loss = train_one_epoch(model, train_loader, optimizer, loss_fn)
-        train_losses.append(loss) # records losses
-        print(f"Epoch {epoch+1}/{num_epoch} | Loss: {loss:.4f}")
+        train_loss = train_one_epoch(model, train_loader, optimizer, loss_fn)
+        train_losses.append(train_loss) # records losses
+        
+        val_loss, dice_scores = validate(model, val_loader, loss_fn)
+        val_losses.append(val_loss) # records val_losses
+        dice_scores_history.append(dice_scores) # dice scores
+        
+        
+        print(f"Epoch {epoch+1}/{num_epoch}")
+        print(f"  Train loss: {train_loss:.4f}")
+        print(f"  Val loss:   {val_loss:.4f}")
+        print(f"  Dice - WT: {dice_scores[0]:.4f} | TC: {dice_scores[1]:.4f} | ET: {dice_scores[2]:.4f}")
 
         # always save latest for resuming
-        torch.save({
-            "epoch": epoch,
-            "model_state_dict": model.state_dict(),
-            "optimizer_state_dict": optimizer.state_dict(),
-            "loss": loss,
-            "train_losses": train_losses,
-            "best_loss": best_loss,
-        }, "checkpoint_latest.pt")
+        save_checkpoint("`checkpoint_latest`.pt", epoch, model, optimizer, train_losses, val_losses, dice_scores_history, best_loss)
 
         # only save best when loss improves
-        if loss < best_loss:
-            best_loss = loss
-            torch.save({
-                "epoch": epoch,
-                "model_state_dict": model.state_dict(),
-                "optimizer_state_dict": optimizer.state_dict(),
-                "loss": loss,
-            }, "checkpoint_best.pt")
+        if train_loss < best_loss:
+            best_loss = train_loss
+            save_checkpoint("checkpoint_best.pt", epoch, model, optimizer, train_losses, val_losses, dice_scores_history, best_loss=None)
             print(f"New best saved: {best_loss:.4f}")

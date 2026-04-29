@@ -1,7 +1,7 @@
 import matplotlib.pyplot as plt
 import torch
 
-checkpoint = torch.load("checkpoint_latest.pt", map_location="cpu")
+checkpoint = torch.load("checkpoint_latest.pt", map_location="cpu") # maps CUDA weights back to cpu
 train_losses = checkpoint["train_losses"]
 epochs = range(1, len(train_losses) + 1)
 

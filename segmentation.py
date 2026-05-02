@@ -208,7 +208,7 @@ def validate(model, loader, loss_fn):
 
 # Checkpoint
 
-def save_checkpoint(path, epoch, model, optimizer, train_losses, val_losses, dice_scores_history, best_loss):
+def save_checkpoint(path, epoch, model, optimizer, train_losses, val_losses, dice_scores_history):
     torch.save({
         "epoch": epoch,
         "model_state_dict": model.state_dict(),
@@ -216,7 +216,14 @@ def save_checkpoint(path, epoch, model, optimizer, train_losses, val_losses, dic
         "train_losses": train_losses,
         "val_losses": val_losses,
         "dice_scores_history": dice_scores_history,
-        "best_loss": best_loss,
+
+    }, path)
+    
+def save_best_checkpoint(path, epoch, model, dice_scores_history):
+    torch.save({
+        "epoch": epoch,
+        "model_state_dict": model.state_dict(),
+        "dice_scores_history": dice_scores_history,
     }, path)
     
 # Main
@@ -243,23 +250,28 @@ if __name__ == "__main__":
 
     num_epoch = 10
     start_epoch = 0
-    
-    best_loss = float("inf")
-    
+
     train_losses = []
     val_losses = []
     dice_scores_history = []
+
 
     if Path("checkpoint_latest.pt").exists():
         checkpoint = torch.load("checkpoint_latest.pt")
         model.load_state_dict(checkpoint["model_state_dict"])
         optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
         start_epoch = checkpoint["epoch"] + 1
-        best_loss = checkpoint["best_loss"]
+        train_losses = checkpoint["train_losses"]
+        val_losses = checkpoint["val_losses"]
+        dice_scores_history = checkpoint["dice_scores_history"]
         print(f"Resuming from epoch {start_epoch}")
     else:
         print("Starting from scratch.")
-
+            
+    best_dice = 0.0
+    if dice_scores_history:
+        best_dice = max(s.mean().item() for s in dice_scores_history)
+        
     for epoch in range(start_epoch, num_epoch):
         train_loss = train_one_epoch(model, train_loader, optimizer, loss_fn)
         train_losses.append(train_loss) # records losses
@@ -275,10 +287,10 @@ if __name__ == "__main__":
         print(f"  Dice - WT: {dice_scores[0]:.4f} | TC: {dice_scores[1]:.4f} | ET: {dice_scores[2]:.4f}")
 
         # always save latest for resuming
-        save_checkpoint("`checkpoint_latest`.pt", epoch, model, optimizer, train_losses, val_losses, dice_scores_history, best_loss)
+        save_checkpoint("checkpoint_latest.pt", epoch, model, optimizer, train_losses, val_losses, dice_scores_history)
 
         # only save best when loss improves
-        if train_loss < best_loss:
-            best_loss = train_loss
-            save_checkpoint("checkpoint_best.pt", epoch, model, optimizer, train_losses, val_losses, dice_scores_history, best_loss=None)
-            print(f"New best saved: {best_loss:.4f}")
+        mean_dice = dice_scores.mean().item()
+        if mean_dice > best_dice:
+            best_dice = mean_dice
+            save_best_checkpoint("checkpoint_best.pt", epoch, model, dice_scores_history)

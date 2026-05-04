@@ -38,7 +38,7 @@ CROP_SIZE    = (96, 96, 96)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 scaler = torch.amp.GradScaler("cuda")
 
-dice_metric = DiceMetric(include_background=False, reduction="mean_batch")
+dice_metric = DiceMetric(include_background=True, reduction="mean_batch")
 post_sigmoid = Activations(sigmoid=True)
 post_pred    = AsDiscrete(threshold=0.5)
 
@@ -59,7 +59,10 @@ def load_data():
     split      = int(len(all_cases) * 0.8)
     train_list = all_cases[:split]
     val_list   = all_cases[split:]
-
+    
+    # for testing
+    train_list = train_list[:20]
+    val_list = val_list[:10]
     return train_list, val_list
 
 
@@ -178,7 +181,7 @@ def validate(model, loader, loss_fn):
     dice_metric.reset()
     
     with torch.no_grad():
-        for batch in tqdm(loader, desc="Validation"):
+        for batch in tqdm(loader, desc="Validation", ncols=80):
             image = batch["image"].to(device)
             label = batch["label"].to(device)
 
@@ -199,11 +202,22 @@ def validate(model, loader, loss_fn):
             pred = post_pred(post_sigmoid(output)) 
             dice_metric(y_pred=pred, y=label)
         
+        buffer = dice_metric.get_buffer()
+        print(f"buffer shape: {buffer.shape}")  # per-sample scores before aggregation
+
+
+        print(f"output shape: {output.shape}")
+        print(f"label shape: {label.shape}")
+        print(f"pred shape: {pred.shape}")
         
         mean_loss = total_loss / len(loader)
-        dice_scores = dice_metric.aggregate()  # shape: (3,) one per channel
+        dice_scores = dice_metric.aggregate()  # shape: (3,) one per channel 
+        raw = dice_metric.aggregate()
+        
+        print(f"aggregate shape: {raw.shape}, values: {raw}")
+
         dice_metric.reset()
-    
+
     return mean_loss, dice_scores
 
 # Checkpoint
@@ -248,7 +262,7 @@ if __name__ == "__main__":
     loss_fn = DiceCELoss(to_onehot_y=False, sigmoid=True)
     optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4, weight_decay=1e-5)
 
-    num_epoch = 10
+    num_epoch = 3
     start_epoch = 0
 
     train_losses = []

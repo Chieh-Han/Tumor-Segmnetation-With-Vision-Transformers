@@ -73,3 +73,16 @@ Necrotic tissue appears dark on **T1** but the contrast between necrosis and the
 ### T2 → complements FLAIR for edema
 
 **T2** also shows edema brightly but without suppressing the CSF, so it picks up slightly different aspects of infiltration. Used alongside **FLAIR** it helps distinguish edema from other fluid.
+
+
+## Project Setup
+* **Visualization:** 2D and 3D viewers for dataset exploration and result verification.
+* **Framework:** **MONAI** for medical-specific data loading, transforms, and training utilities.
+* **Backend:** PyTorch.
+* **Hardware:** **AMD Radeon RX 9600 XT** utilizing **ROCm** for GPU acceleration.
+
+## Model Setup
+I utilized the **SwinUNETR** architecture, which integrates a hierarchical **Swin Transformer encoder** for global feature extraction with a **CNN-based decoder** for upsampling. Skip connections are employed to bridge the encoder and decoder, ensuring high-resolution spatial features are preserved for precise segmentation.
+
+**Transfer Learning Strategy:**
+Leveraging the fact that SwinUNETR is pre-trained on brain tumor segmentation (BraTS), I utilized the **pre-trained encoder weights** to jumpstart the model. This transfer learning approach significantly reduces compute requirements and training time on local hardware while providing highly effective feature representations. The decoder was then trained locally to optimize the model for my specific task.
